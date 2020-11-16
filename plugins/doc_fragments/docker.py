@@ -134,3 +134,8 @@ requirements:
      (see L(here,https://github.com/docker/docker-py/issues/1310) for details).
      This module does *not* work with docker-py."
 '''
+
+    RETURN = r'''
+test:
+    description: bla
+'''
