@@ -11,3 +11,8 @@ class ModuleDocFragment(object):
 test:
     description: bla
 '''
+
+    SOME_BLAH = r'''
+some_blah:
+    description: bla
+'''

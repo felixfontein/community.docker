@@ -136,6 +136,6 @@ requirements:
 '''
 
     RETURN = r'''
-test:
+test_docker:
     description: bla
 '''

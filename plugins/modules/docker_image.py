@@ -188,7 +188,6 @@ options:
 extends_documentation_fragment:
 - community.docker.docker
 - community.docker.docker.docker_py_1_documentation
-- community.docker.docker_return
 
 
 requirements:
@@ -298,6 +297,12 @@ stdout:
     type: str
     sample: ""
     version_added: 1.0.0
+
+extends_documentation_fragment:
+- community.docker.docker
+- community.docker.docker_return
+- community.docker.docker_return.some_blah
+
 '''
 
 import errno
