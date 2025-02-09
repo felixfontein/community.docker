@@ -11,12 +11,15 @@
 - name: Setup Podman
   when: ansible_facts.distribution ~ ansible_facts.distribution_major_version not in  ['CentOS6', 'RedHat6']
   block:
+    - name: Detect whether we are running inside a container
+      current_container_facts:
+
     - name: Look for marker whether Podman was already set up
       stat:
         path: /root/community.docker-podman-is-set-up
       register: podman_setup_marker
 
-    - when: not podman_setup_marker.stat.exists
+    - when: not podman_setup_marker.stat.exists and not ansible_module_running_in_container
       block:
         - name:
           debug:
@@ -39,20 +42,17 @@
               paths:
                 - "{{ role_path }}/vars"
 
-        - name: Install podman
-          package:
-            name: "{{ podman_packages }}"
-          notify: cleanup podman
+        - when: has_podman
+          block:
+            - name: Install podman
+              package:
+                name: "{{ podman_packages }}"
+              notify: cleanup podman
 
-        - name: Start podman socket
-          service:
-            name: podman.socket
-            state: started
-
-        - name: Create podman Docker context
-          command:
-            cmd: docker context create podman --description Podman --docker host=unix://$XDG_RUNTIME_DIR/podman/podman.sock
-          ignore_errors: true
+            - name: Start podman socket
+              service:
+                name: "{{ podman_socket_service }}"
+                state: started
 
         - name: Set marker that Podman was already set up
           file:
@@ -60,19 +60,35 @@
             state: touch
           when: podman_skip_cleanup
 
-    # Detect podman CLI version
-    - name: Check Podman CLI version
-      command: "podman version -f {% raw %}'{{.Client.Version}}'{% endraw %}"
-      register: podman_cli_version_stdout
-      ignore_errors: true
+    - when: not has_podman or ansible_module_running_in_container
+      block:
+        - set_fact:
+            podman_cli_version: "0.0"
+            podman_socket: "not available"
 
-    - name: Print Podman socket URL with resolved environment variables
-      command: echo unix://$XDG_RUNTIME_DIR/podman/podman.sock
-      register: podman_socket_stdout
+    - when: has_podman and not ansible_module_running_in_container
+      block:
+        - name: Check Podman CLI version
+          command: "podman version -f {% raw %}'{{.Client.Version}}'{% endraw %}"
+          register: podman_cli_version_stdout
+          ignore_errors: true
 
-    - set_fact:
-        podman_cli_version: "{{ podman_cli_version_stdout.stdout | default('0.0', true) }}"
-        podman_socket: "{{ podman_socket_stdout.stdout }}"
+        - name: Figure out XDG_RUNTIME_DIR
+          shell: echo $XDG_RUNTIME_DIR || echo /run/user/$(uid)
+          register: podman_run_dir
+
+        - set_fact:
+            podman_cli_version: "{{ podman_cli_version_stdout.stdout | default('0.0', true) }}"
+            podman_socket: "unix://{{ podman_run_dir.stdout }}/podman/podman.sock"
+
+        - name: Create podman Docker context
+          command:
+            cmd: >-
+              docker context
+              create podman
+              --description "Podman"
+              --docker "host={{ podman_socket }}"
+          ignore_errors: true
 
     - debug:
         msg: |-
