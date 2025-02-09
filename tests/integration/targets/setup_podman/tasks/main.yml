@@ -49,10 +49,17 @@
                 name: "{{ podman_packages }}"
               notify: cleanup podman
 
-            - name: Start podman socket
-              service:
+            - name: Figure out user ID
+              command: id -u
+              register: podman_user_id
+
+            - name: Start podman socket for this user
+              systemd_service:
                 name: "{{ podman_socket_service }}"
                 state: started
+                scope: user
+              environment:
+                XDG_RUNTIME_DIR: "/run/user/{{ podman_user_id.stdout }}"
 
         - name: Set marker that Podman was already set up
           file:
@@ -73,13 +80,9 @@
           register: podman_cli_version_stdout
           ignore_errors: true
 
-        - name: Figure out XDG_RUNTIME_DIR
-          shell: echo $XDG_RUNTIME_DIR || echo /run/user/$(uid)
-          register: podman_run_dir
-
         - set_fact:
             podman_cli_version: "{{ podman_cli_version_stdout.stdout | default('0.0', true) }}"
-            podman_socket: "unix://{{ podman_run_dir.stdout }}/podman/podman.sock"
+            podman_socket: "unix:///run/user/{{ podman_user_id.stdout }}/podman/podman.sock"
 
         - name: Create podman Docker context
           command:
