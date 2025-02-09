@@ -13,3 +13,17 @@
 
 - fail: msg="Too old docker / docker-py version to run docker_host_info tests!"
   when: not(docker_api_version is version('1.25', '>=')) and (ansible_distribution != 'CentOS' or ansible_distribution_major_version|int > 6)
+
+- when: podman_cli_version is version('1.0.0', '>=')
+  environment:
+    DOCKER_HOST: "{{ podman_socket }}"
+  block:
+    - name: Get info on Podman host
+      docker_host_info:
+      register: output
+
+    - name: Check for some Podman specific values
+      assert:
+        that:
+          - output.host_info.ProductLicense == 'Apache-2.0'
+          - output.host_info.Rootless == true

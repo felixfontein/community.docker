@@ -1,0 +1,144 @@
+---
+# Copyright (c) Ansible Project
+# GNU General Public License v3.0+ (see LICENSES/GPL-3.0-or-later.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+####################################################################
+# WARNING: These are designed specifically for Ansible tests       #
+# and should not be used as examples of how to write Ansible roles #
+####################################################################
+
+- name: Setup Podman
+  when: ansible_facts.distribution ~ ansible_facts.distribution_major_version not in  ['CentOS6', 'RedHat6']
+  block:
+    - name: Look for marker whether Podman was already set up
+      stat:
+        path: /root/community.docker-podman-is-set-up
+      register: podman_setup_marker
+
+    - when: not podman_setup_marker.stat.exists
+      block:
+        - name:
+          debug:
+            msg: |-
+              OS family: {{ ansible_facts.os_family }}
+              Distribution: {{ ansible_facts.distribution }}
+              Distribution major version: {{ ansible_facts.distribution_major_version }}
+              Distribution full version: {{ ansible_facts.distribution_version }}
+
+        - name: Include distribution specific variables
+          include_vars: "{{ lookup('first_found', params) }}"
+          vars:
+            params:
+              files:
+                - "{{ ansible_facts.distribution }}-{{ ansible_facts.distribution_major_version }}.yml"
+                - "{{ ansible_facts.os_family }}-{{ ansible_facts.distribution_major_version }}.yml"
+                - "{{ ansible_facts.distribution }}.yml"
+                - "{{ ansible_facts.os_family }}.yml"
+                - default.yml
+              paths:
+                - "{{ role_path }}/vars"
+
+        - name: Install podman
+          package:
+            name: "{{ podman_packages }}"
+          notify: cleanup podman
+
+        - name: Start podman socket
+          service:
+            name: podman.socket
+            state: started
+
+        - name: Create podman Docker context
+          command:
+            cmd: docker context create podman --description Podman --docker host=unix://$XDG_RUNTIME_DIR/podman/podman.sock
+          ignore_errors: true
+
+        - name: Set marker that Podman was already set up
+          file:
+            path: /root/community.docker-podman-is-set-up
+            state: touch
+          when: podman_skip_cleanup
+
+    # Detect podman CLI version
+    - name: Check Podman CLI version
+      command: "podman version -f {% raw %}'{{.Client.Version}}'{% endraw %}"
+      register: podman_cli_version_stdout
+      ignore_errors: true
+
+    - name: Print Podman socket URL with resolved environment variables
+      command: echo unix://$XDG_RUNTIME_DIR/podman/podman.sock
+      register: podman_socket_stdout
+
+    - set_fact:
+        podman_cli_version: "{{ podman_cli_version_stdout.stdout | default('0.0', true) }}"
+        podman_socket: "{{ podman_socket_stdout.stdout }}"
+
+    - debug:
+        msg: |-
+          Podman CLI version: {{ podman_cli_version }}
+          Podman socket: {{ podman_socket }}
+
+    - when: podman_cli_version is version('0.0', '>')
+      block:
+        # Cleanup podman
+        - name: Show all containers
+          command: 'podman ps --no-trunc --format {% raw %}"{{.Names}}"{% endraw %}'
+
+        - name: "Remove all ansible-docker-test-* podman containers"
+          shell: 'podman ps --no-trunc --format {% raw %}"{{.Names}}"{% endraw %} | grep "^ansible-docker-test-" | xargs -r podman container rm -f'
+          register: podman_containers
+          retries: 3
+          delay: 3
+          until: podman_containers is success
+          ignore_errors: true
+
+        - name: "Remove all ansible-docker-test-* podman volumes"
+          shell: 'podman volume ls --format {% raw %}"{{.Name}}"{% endraw %} | grep "^ansible-docker-test-" | xargs -r podman volume rm -f'
+          register: podman_volumes
+          ignore_errors: true
+
+        - name: "Remove all ansible-docker-test-* podman networks"
+          shell: 'podman network ls --no-trunc --format {% raw %}"{{.Name}}"{% endraw %} | grep "^ansible-docker-test-" | xargs -r podman network rm'
+          register: podman_networks
+          ignore_errors: true
+
+        - name: Cleaned podman resources
+          debug:
+            var: podman_resources
+          vars:
+            podman_resources:
+              containers: "{{ podman_containers.stdout_lines | default([]) }}"
+              volumes: "{{ podman_volumes.stdout_lines | default([]) }}"
+              networks: "{{ podman_networks.stdout_lines | default([]) }}"
+
+        # List all existing podman resources
+        - name: List all podman containers
+          command: podman ps --no-trunc -a
+          register: podman_containers
+          ignore_errors: true
+
+        - name: List all podman volumes
+          command: podman volume ls
+          register: podman_volumes
+          ignore_errors: true
+
+        - name: List all podman networks
+          command: podman network ls --no-trunc
+          register: podman_networks
+          ignore_errors: true
+
+        - name: List all podman images
+          command: podman images --no-trunc -a
+          register: podman_images
+          ignore_errors: true
+
+        - name: Still existing podman resources
+          debug:
+            var: podman_resources
+          vars:
+            podman_resources:
+              containers: "{{ podman_containers.stdout_lines | default([]) }}"
+              volumes: "{{ podman_volumes.stdout_lines | default([]) }}"
+              networks: "{{ podman_networks.stdout_lines | default([]) }}"
+              images: "{{ podman_images.stdout_lines | default([]) }}"
